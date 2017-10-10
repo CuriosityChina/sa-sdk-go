@@ -36,8 +36,8 @@ func NewClient(consumer Consumer, projectName string, timeFree bool) (*Client, e
 	return &c, nil
 }
 
-func (v *Client) match(input string) bool {
-	if v.namePattern.Match([]byte(input)) {
+func (c *Client) match(input string) bool {
+	if c.namePattern.Match([]byte(input)) {
 		for _, keyword := range FieldKeywords {
 			if keyword == input {
 				return false
@@ -48,19 +48,21 @@ func (v *Client) match(input string) bool {
 	return false
 }
 
-func (v *Client) now() int64 {
+func (c *Client) now() int64 {
 	return time.Now().Unix() * 1000
 }
 
 // RegisterSuperProperties 设置每个事件都带有的一些公共属性，当 track 的 properties 和 super properties 有相同的 key 时，将采用 track 的
 // :param superProperties 公共属性
-func (v *Client) RegisterSuperProperties(superProperties map[string]interface{}) {
-
+func (c *Client) RegisterSuperProperties(superProperties map[string]interface{}) {
+	for k, v := range superProperties {
+		c.superProperties[k] = v
+	}
 }
 
 // ClearSuperProperties 删除所有已设置的事件公共属性
-func (v *Client) ClearSuperProperties() {
-	v.superProperties = map[string]interface{}{
+func (c *Client) ClearSuperProperties() {
+	c.superProperties = map[string]interface{}{
 		"$lib":         "golang",
 		"$lib_version": SDKVersion,
 	}
@@ -70,14 +72,14 @@ func (v *Client) ClearSuperProperties() {
 // :param distinctID: 用户的唯一标识
 // :param eventName: 事件名称
 // :param properties: 事件的属性
-func (v *Client) Track(distinctID string, eventName string, properties map[string]interface{}, isLoginID bool) error {
-	allProperties := v.superProperties
+func (c *Client) Track(distinctID string, eventName string, properties map[string]interface{}, isLoginID bool) error {
+	allProperties := c.superProperties
 	if properties != nil {
 		for k, v := range properties {
 			allProperties[k] = v
 		}
 	}
-	return v.trackEvent("track", eventName, distinctID, "", allProperties, isLoginID)
+	return c.trackEvent("track", eventName, distinctID, "", allProperties, isLoginID)
 }
 
 // TrackSignup 这个接口是一个较为复杂的功能，请在使用前先阅读相关说明:http://www.sensorsdata.cn/manual/track_signup.html，
@@ -85,23 +87,23 @@ func (v *Client) Track(distinctID string, eventName string, properties map[strin
 // :param distinct_id: 用户注册之后的唯一标识
 // :param original_id: 用户注册前的唯一标识
 // :param properties: 事件的属性
-func (v *Client) TrackSignup(distinctID string, originalID string, properties map[string]interface{}) error {
+func (c *Client) TrackSignup(distinctID string, originalID string, properties map[string]interface{}) error {
 	if len(originalID) == 0 {
 		return fmt.Errorf("%s: %s", ErrIllegalDataException, "property [original_id] must not be empty")
 	}
 	if len(originalID) > 255 {
 		return fmt.Errorf("%s: %s", ErrIllegalDataException, "the max length of property [original_id] is 255")
 	}
-	allProperties := v.superProperties
+	allProperties := c.superProperties
 	if properties != nil {
 		for key, value := range properties {
 			allProperties[key] = value
 		}
 	}
-	return v.trackEvent("track_signup", "$SignUp", distinctID, originalID, allProperties, false)
+	return c.trackEvent("track_signup", "$SignUp", distinctID, originalID, allProperties, false)
 }
 
-func (v *Client) normalizeData(data map[string]interface{}) (map[string]interface{}, error) {
+func (c *Client) normalizeData(data map[string]interface{}) (map[string]interface{}, error) {
 	// 检查 distinct_id
 	distinctIDI, ok := data["distinct_id"]
 	if !ok {
@@ -142,7 +144,7 @@ func (v *Client) normalizeData(data map[string]interface{}) (map[string]interfac
 	if !ok {
 		return data, fmt.Errorf("%s: %s", ErrIllegalDataException, "property [event] must no be empty")
 	}
-	if !v.match(event) {
+	if !c.match(event) {
 		return data, fmt.Errorf("%s: %s", ErrIllegalDataException, fmt.Sprintf("event name must be a valid variable name. [event=%s]", event))
 	}
 
@@ -155,7 +157,7 @@ func (v *Client) normalizeData(data map[string]interface{}) (map[string]interfac
 	if !ok {
 		return data, fmt.Errorf("%s: %s", ErrIllegalDataException, "property [project] must no be empty")
 	}
-	if !v.match(project) {
+	if !c.match(project) {
 		return data, fmt.Errorf("%s: %s", ErrIllegalDataException, fmt.Sprintf("project name must be a valid variable name. [project=%s]", event))
 	}
 
@@ -168,7 +170,7 @@ func (v *Client) normalizeData(data map[string]interface{}) (map[string]interfac
 				if len(key) > 255 {
 					return data, fmt.Errorf("%s: %s", ErrIllegalDataException, fmt.Sprintf("the max length of property key is 256. [key=%s]", key))
 				}
-				if !v.match(key) {
+				if !c.match(key) {
 					return data, fmt.Errorf("%s: %s", ErrIllegalDataException, fmt.Sprintf("the property key must be a valid variable name. [key=%s]", key))
 				}
 				switch value.(type) {
@@ -192,32 +194,32 @@ func (v *Client) normalizeData(data map[string]interface{}) (map[string]interfac
 	return data, nil
 }
 
-func (v *Client) getLibProperties() map[string]interface{} {
+func (c *Client) getLibProperties() map[string]interface{} {
 	libProperties := map[string]interface{}{
 		"$lib":         "golang",
 		"$lib_version": SDKVersion,
 		"$lib_method":  "code",
 	}
-	if appVersion, ok := v.superProperties["$app_version"]; ok {
+	if appVersion, ok := c.superProperties["$app_version"]; ok {
 		libProperties["$app_version"] = appVersion
 	}
 	return libProperties
 }
 
 // getCommonProperties 构造所有 Event 通用的属性
-func (v *Client) getCommonProperties() map[string]interface{} {
+func (c *Client) getCommonProperties() map[string]interface{} {
 	commonProperties := map[string]interface{}{
 		"$lib":         "golang",
 		"$lib_version": SDKVersion,
 	}
-	if v.appVersion != nil {
-		commonProperties["$app_version"] = v.appVersion
+	if c.appVersion != nil {
+		commonProperties["$app_version"] = c.appVersion
 	}
 	return commonProperties
 }
 
 // extractUserTime 如果用户传入了 $time 字段，则不使用当前时间。
-func (v *Client) extractUserTime(properties map[string]interface{}) *int64 {
+func (c *Client) extractUserTime(properties map[string]interface{}) *int64 {
 	if properties != nil {
 		ti, ok := properties["$time"]
 		if ok {
@@ -234,55 +236,55 @@ func (v *Client) extractUserTime(properties map[string]interface{}) *int64 {
 // ProfileSet 直接设置一个用户的 Profile，如果已存在则覆盖
 // :param distinct_id: 用户的唯一标识
 // :param profiles: 用户属性
-func (v *Client) ProfileSet(distinctID string, profiles map[string]interface{}, isLoginID bool) error {
-	return v.trackEvent("profile_set", "", distinctID, "", profiles, isLoginID)
+func (c *Client) ProfileSet(distinctID string, profiles map[string]interface{}, isLoginID bool) error {
+	return c.trackEvent("profile_set", "", distinctID, "", profiles, isLoginID)
 }
 
 // ProfileSetOnce 直接设置一个用户的 Profile，如果某个 Profile 已存在则不设置。
 // :param distinct_id: 用户的唯一标识
 // :param profiles: 用户属性
-func (v *Client) ProfileSetOnce(distinctID string, profiles map[string]interface{}, isLoginID bool) error {
-	return v.trackEvent("profile_set_once", "", distinctID, "", profiles, isLoginID)
+func (c *Client) ProfileSetOnce(distinctID string, profiles map[string]interface{}, isLoginID bool) error {
+	return c.trackEvent("profile_set_once", "", distinctID, "", profiles, isLoginID)
 }
 
 // ProfileIncrement 增减/减少一个用户的某一个或者多个数值类型的 Profile。
 // :param distinct_id: 用户的唯一标识
 // :param profiles: 用户属性
-func (v *Client) ProfileIncrement(distinctID string, profiles map[string]interface{}, isLoginID bool) error {
-	return v.trackEvent("profile_increment", "", distinctID, "", profiles, isLoginID)
+func (c *Client) ProfileIncrement(distinctID string, profiles map[string]interface{}, isLoginID bool) error {
+	return c.trackEvent("profile_increment", "", distinctID, "", profiles, isLoginID)
 }
 
 // ProfileAppend 追加一个用户的某一个或者多个集合类型的 Profile。
 // :param distinct_id: 用户的唯一标识
 // :param profiles: 用户属性
-func (v *Client) ProfileAppend(distinctID string, profiles map[string]interface{}, isLoginID bool) error {
-	return v.trackEvent("profile_append", "", distinctID, "", profiles, isLoginID)
+func (c *Client) ProfileAppend(distinctID string, profiles map[string]interface{}, isLoginID bool) error {
+	return c.trackEvent("profile_append", "", distinctID, "", profiles, isLoginID)
 }
 
 // ProfileUnset 删除一个用户的一个或者多个 Profile。
 // :param distinct_id: 用户的唯一标识
 // :param profile_keys: 用户属性键值列表
-func (v *Client) ProfileUnset(distinctID string, profileKeys []string, isLoginID bool) error {
+func (c *Client) ProfileUnset(distinctID string, profileKeys []string, isLoginID bool) error {
 	var profileMap map[string]interface{}
 	for _, v := range profileKeys {
 		profileMap[v] = true
 	}
-	return v.trackEvent("profile_unset", "", distinctID, "", profileMap, isLoginID)
+	return c.trackEvent("profile_unset", "", distinctID, "", profileMap, isLoginID)
 }
 
 // ProfileDelete 删除整个用户的信息。
 // :param distinct_id: 用户的唯一标识
-func (v *Client) ProfileDelete(distinctID string, isLoginID bool) error {
-	return v.trackEvent("profile_delete", "", distinctID, "", nil, isLoginID)
+func (c *Client) ProfileDelete(distinctID string, isLoginID bool) error {
+	return c.trackEvent("profile_delete", "", distinctID, "", nil, isLoginID)
 }
 
-func (v *Client) trackEvent(eventType string, eventName string, distinctID string, originalID string, properties map[string]interface{}, isLoginID bool) error {
+func (c *Client) trackEvent(eventType string, eventName string, distinctID string, originalID string, properties map[string]interface{}, isLoginID bool) error {
 	var eventTime int64
-	t := v.extractUserTime(properties)
+	t := c.extractUserTime(properties)
 	if t != nil {
 		eventTime = *t
 	} else {
-		eventTime = v.now()
+		eventTime = c.now()
 	}
 	if isLoginID {
 		properties["$is_login_id"] = true
@@ -292,10 +294,10 @@ func (v *Client) trackEvent(eventType string, eventName string, distinctID strin
 		"time":        eventTime,
 		"distinct_id": distinctID,
 		"properties":  properties,
-		"lib":         v.getLibProperties(),
+		"lib":         c.getLibProperties(),
 	}
-	if v.projectName != nil {
-		data["project"] = v.projectName
+	if c.projectName != nil {
+		data["project"] = c.projectName
 	}
 	if eventType == "track" || eventType == "track_signup" {
 		data["event"] = eventName
@@ -303,22 +305,22 @@ func (v *Client) trackEvent(eventType string, eventName string, distinctID strin
 	if eventType == "track_signup" {
 		data["original_id"] = originalID
 	}
-	if v.enableTimeFree {
+	if c.enableTimeFree {
 		data["time_free"] = true
 	}
-	data, err := v.normalizeData(data)
+	data, err := c.normalizeData(data)
 	if err != nil {
 		return err
 	}
-	return v.consumer.Send(data)
+	return c.consumer.Send(data)
 }
 
 // Flush 对于不立即发送数据的 Consumer，调用此接口应当立即进行已有数据的发送。
-func (v *Client) Flush() error {
-	return v.consumer.Flush()
+func (c *Client) Flush() error {
+	return c.consumer.Flush()
 }
 
 // Close 在进程结束或者数据发送完成时，应当调用此接口，以保证所有数据被发送完毕。如果发生意外，此方法将抛出异常。
-func (v *Client) Close() error {
-	return v.consumer.Close()
+func (c *Client) Close() error {
+	return c.consumer.Close()
 }
