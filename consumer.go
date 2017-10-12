@@ -1,12 +1,13 @@
 package sensorsanalytics
 
 import (
-	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
+	"net/url"
 )
 
 // Consumer sensors analytics consumer data
@@ -14,12 +15,6 @@ type Consumer interface {
 	Send(message map[string]interface{}) error
 	Flush() error
 	Close() error
-}
-
-// SARequest sensorsdata anaalytics request
-type SARequest struct {
-	Data string `json:"data"`
-	Gzip int    `json:"gzip"`
 }
 
 // DefaultConsumer 默认的 Consumer实现，逐条、同步的发送数据给接收服务器。
@@ -41,16 +36,20 @@ func (c *DefaultConsumer) Send(msg map[string]interface{}) error {
 	if err != nil {
 		return fmt.Errorf("%s: %s", ErrIllegalDataException, err)
 	}
-	req := SARequest{
-		Data: data,
-		Gzip: 0,
-	}
-	b := new(bytes.Buffer)
-	json.NewEncoder(b).Encode(req)
-	resp, err := http.Post(c.urlPrefix, "application/json; charset=utf-8", b)
+	req, err := http.NewRequest("GET", c.urlPrefix, nil)
+	q := req.URL.Query()
+	q.Add("data", data)
+	req.URL.RawQuery = q.Encode()
 	if err != nil {
 		return fmt.Errorf("%s: %s", ErrNetworkException, err)
 	}
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+	var clt http.Client
+	resp, err := clt.Do(req)
+	if err != nil {
+		return fmt.Errorf("%s: %s", ErrNetworkException, err)
+	}
+	defer resp.Body.Close()
 	if resp.StatusCode != 200 && resp.StatusCode != 201 {
 		return fmt.Errorf("%s: %s", ErrNetworkException, fmt.Sprintf("Error response status code [code=%d]", resp.StatusCode))
 	}
@@ -113,13 +112,16 @@ func (c *BatchConsumer) Send(msg map[string]interface{}) error {
 // Flush  用户可以主动调用 flush 接口，以便在需要的时候立即进行数据发送。
 func (c *BatchConsumer) Flush() error {
 	for _, v := range c.buffer {
-		req := SARequest{
-			Data: v,
-			Gzip: 0,
+		req, err := http.NewRequest("GET", c.urlPrefix, nil)
+		q := req.URL.Query()
+		q.Add("data", v)
+		req.URL.RawQuery = q.Encode()
+		if err != nil {
+			return fmt.Errorf("%s: %s", ErrNetworkException, err)
 		}
-		b := new(bytes.Buffer)
-		json.NewEncoder(b).Encode(req)
-		resp, err := http.Post(c.urlPrefix, "application/json; charset=utf-8", b)
+		req.Header.Set("Content-Type", "application/json; charset=utf-8")
+		var clt http.Client
+		resp, err := clt.Do(req)
 		if err != nil {
 			log.Printf("%s: %s", ErrNetworkException, err)
 		}
@@ -134,4 +136,123 @@ func (c *BatchConsumer) Flush() error {
 // Close 在发送完成时，调用此接口以保证数据发送完成。
 func (c *BatchConsumer) Close() error {
 	return c.Flush()
+}
+
+// type AsyncBatchConsumer struct {
+// 	DefaultConsumer
+// }
+
+// func (c *AsyncBatchConsumer) Send(msg map[string]interface{}) error {
+// 	return nil
+// }
+
+// func (c *AsyncBatchConsumer) Flush() {
+// }
+
+// func (c *AsyncBatchConsumer) Sync_Flush() error {
+// 	return nil
+// }
+
+// func (c *AsyncBatchConsumer) Close() error {
+// 	return nil
+// }
+
+// func (c *AsyncBatchConsumer) Run() {
+
+// }
+
+type ConsoleConsumer struct {
+}
+
+func NewConsoleConsumer() *ConsoleConsumer {
+	var c ConsoleConsumer
+	return &c
+}
+
+func (c *ConsoleConsumer) Send(msg map[string]interface{}) error {
+	b, err := json.MarshalIndent(msg, "", "    ")
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(b))
+	return nil
+}
+
+func (c *ConsoleConsumer) Flush() error {
+	return nil
+}
+
+func (c *ConsoleConsumer) Close() error {
+	return nil
+}
+
+type DebugConsumer struct {
+	urlPrefix      string
+	debugWriteData bool
+}
+
+func NewDebugConsumer(serverURL string, writeData bool) (*DebugConsumer, error) {
+	var c DebugConsumer
+	debugURL, err := url.Parse(serverURL)
+	if err != nil {
+		return &c, err
+	}
+	debugURL.Path = "/debug"
+	c.urlPrefix = debugURL.String()
+	c.debugWriteData = writeData
+	return &c, err
+}
+
+func (c *DebugConsumer) Send(msg map[string]interface{}) error {
+	data, err := c.encodeMsg(msg)
+	if err != nil {
+		return fmt.Errorf("%s: %s", ErrIllegalDataException, err)
+	}
+	req, err := http.NewRequest("GET", c.urlPrefix, nil)
+	q := req.URL.Query()
+	q.Add("data", data)
+	req.URL.RawQuery = q.Encode()
+	if err != nil {
+		return fmt.Errorf("%s: %s", ErrNetworkException, err)
+	}
+	if !c.debugWriteData {
+		req.Header.Add("Dry-Run", "true")
+	}
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+	var clt http.Client
+	resp, err := clt.Do(req)
+	if err != nil {
+		log.Printf("%s: %s", ErrNetworkException, err)
+		return fmt.Errorf("%s: %s", ErrNetworkException, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == 200 {
+		log.Printf("%s", string(data))
+	} else {
+		log.Printf("invalid message: %s", string(data))
+		log.Printf("ret_code: %d", resp.StatusCode)
+		body, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			log.Printf("read response body: %s", err)
+		}
+		log.Printf("resp content: %s", string(body))
+	}
+	return nil
+}
+
+func (c *DebugConsumer) Flush() error {
+	return nil
+}
+
+func (c *DebugConsumer) Close() error {
+	return nil
+}
+
+func (c *DebugConsumer) encodeMsg(msg map[string]interface{}) (string, error) {
+	s, err := json.Marshal(msg)
+	if err != nil {
+		return "", err
+	}
+	data := base64.StdEncoding.EncodeToString(s)
+	return data, nil
 }

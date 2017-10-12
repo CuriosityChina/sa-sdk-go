@@ -33,6 +33,7 @@ func NewClient(consumer Consumer, projectName string, timeFree bool) (*Client, e
 		return nil, err
 	}
 	c.namePattern = namePattern
+	c.ClearSuperProperties()
 	return &c, nil
 }
 
@@ -116,7 +117,6 @@ func (c *Client) normalizeData(data map[string]interface{}) (map[string]interfac
 	if len(distinctID) > 255 {
 		return data, fmt.Errorf("%s: %s", ErrIllegalDataException, "the max length of [distinct_id] is 255")
 	}
-
 	// 检查 time
 	tsI, ok := data["time"]
 	if !ok {
@@ -137,30 +137,26 @@ func (c *Client) normalizeData(data map[string]interface{}) (map[string]interfac
 
 	// 检查 event name
 	eventI, ok := data["event"]
-	if !ok {
-		return data, fmt.Errorf("%s: %s", ErrIllegalDataException, "property [event] must no be empty")
+	if ok {
+		event, ok := eventI.(string)
+		if !ok {
+			return data, fmt.Errorf("%s: %s", ErrIllegalDataException, "property [event] must no be empty")
+		}
+		if !c.match(event) {
+			return data, fmt.Errorf("%s: %s", ErrIllegalDataException, fmt.Sprintf("event name must be a valid variable name. [event=%s]", event))
+		}
 	}
-	event, ok := eventI.(string)
-	if !ok {
-		return data, fmt.Errorf("%s: %s", ErrIllegalDataException, "property [event] must no be empty")
-	}
-	if !c.match(event) {
-		return data, fmt.Errorf("%s: %s", ErrIllegalDataException, fmt.Sprintf("event name must be a valid variable name. [event=%s]", event))
-	}
-
 	// 检查 project name
 	projectI, ok := data["project"]
-	if !ok {
-		return data, fmt.Errorf("%s: %s", ErrIllegalDataException, "property [project] must no be empty")
+	if ok {
+		project, ok := projectI.(string)
+		if !ok {
+			return data, fmt.Errorf("%s: %s", ErrIllegalDataException, "property [project] must no be empty")
+		}
+		if !c.match(project) {
+			return data, fmt.Errorf("%s: %s", ErrIllegalDataException, fmt.Sprintf("project name must be a valid variable name. [project=%s]", project))
+		}
 	}
-	project, ok := projectI.(string)
-	if !ok {
-		return data, fmt.Errorf("%s: %s", ErrIllegalDataException, "property [project] must no be empty")
-	}
-	if !c.match(project) {
-		return data, fmt.Errorf("%s: %s", ErrIllegalDataException, fmt.Sprintf("project name must be a valid variable name. [project=%s]", event))
-	}
-
 	// 检查 properties
 	propertiesi, ok := data["properties"]
 	if ok {
@@ -297,7 +293,7 @@ func (c *Client) trackEvent(eventType string, eventName string, distinctID strin
 		"lib":         c.getLibProperties(),
 	}
 	if c.projectName != nil {
-		data["project"] = c.projectName
+		data["project"] = *c.projectName
 	}
 	if eventType == "track" || eventType == "track_signup" {
 		data["event"] = eventName
