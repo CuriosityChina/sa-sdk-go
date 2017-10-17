@@ -32,7 +32,7 @@ func NewDefaultConsumer(serverURL string) *DefaultConsumer {
 
 // Send 发送数据
 func (c *DefaultConsumer) Send(msg map[string]interface{}) error {
-	data, err := c.encodeMsg(msg)
+	data, _, err := c.encodeMsg(msg)
 	if err != nil {
 		return fmt.Errorf("%s: %s", ErrIllegalDataException, err)
 	}
@@ -66,13 +66,13 @@ func (c *DefaultConsumer) Close() error {
 	return nil
 }
 
-func (c *DefaultConsumer) encodeMsg(msg map[string]interface{}) (string, error) {
+func (c *DefaultConsumer) encodeMsg(msg map[string]interface{}) (string, string, error) {
 	s, err := json.Marshal(msg)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	data := base64.StdEncoding.EncodeToString(s)
-	return data, nil
+	return data, string(s), nil
 }
 
 // BatchConsumer  批量发送数据的 Consumer，当且仅当数据达到 buffer_size 参数指定的量时，才将数据进行发送。
@@ -98,7 +98,7 @@ func NewBatchConsumer(serverURL string, bufferSize int) *BatchConsumer {
 
 // Send 新的 msg 加入 buffer
 func (c *BatchConsumer) Send(msg map[string]interface{}) error {
-	data, err := c.encodeMsg(msg)
+	data, _,  err := c.encodeMsg(msg)
 	if err != nil {
 		return fmt.Errorf("%s: %s", ErrIllegalDataException, err)
 	}
@@ -204,7 +204,7 @@ func NewDebugConsumer(serverURL string, writeData bool) (*DebugConsumer, error) 
 }
 
 func (c *DebugConsumer) Send(msg map[string]interface{}) error {
-	data, err := c.encodeMsg(msg)
+	data, s, err := c.encodeMsg(msg)
 	if err != nil {
 		return fmt.Errorf("%s: %s", ErrIllegalDataException, err)
 	}
@@ -227,7 +227,7 @@ func (c *DebugConsumer) Send(msg map[string]interface{}) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == 200 {
-		log.Printf("%s", string(data))
+		log.Printf("%s", s)
 	} else {
 		log.Printf("invalid message: %s", string(data))
 		log.Printf("ret_code: %d", resp.StatusCode)
@@ -248,11 +248,11 @@ func (c *DebugConsumer) Close() error {
 	return nil
 }
 
-func (c *DebugConsumer) encodeMsg(msg map[string]interface{}) (string, error) {
+func (c *DebugConsumer) encodeMsg(msg map[string]interface{}) (string, string, error) {
 	s, err := json.Marshal(msg)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	data := base64.StdEncoding.EncodeToString(s)
-	return data, nil
+	return data, string(s), nil
 }

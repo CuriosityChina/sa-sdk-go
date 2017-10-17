@@ -158,6 +158,12 @@ func (c *Client) normalizeData(data map[string]interface{}) (map[string]interfac
 		}
 	}
 	// 检查 properties
+	var eventType string
+	eventTypeI, ok := data["type"]
+	if ok {
+		eventType = eventTypeI.(string)
+
+	}
 	propertiesi, ok := data["properties"]
 	if ok {
 		properties, ok := propertiesi.(map[string]interface{})
@@ -176,6 +182,10 @@ func (c *Client) normalizeData(data map[string]interface{}) (map[string]interfac
 						if len(v) > 8192 {
 							return data, fmt.Errorf("%s: %s", ErrIllegalDataException, fmt.Sprintf("the max length of property value is 8192. [value=%s]", value))
 						}
+					}
+				case bool:
+					if eventType != "profile_unset" {
+						return data, fmt.Errorf("%s: %s", ErrIllegalDataException, fmt.Sprintf("property value must be a str/int/float/list. [value=%s]", reflect.TypeOf(value)))
 					}
 				case int, int32, int64, float32, float64, []string:
 					continue
@@ -261,7 +271,7 @@ func (c *Client) ProfileAppend(distinctID string, profiles map[string]interface{
 // :param distinct_id: 用户的唯一标识
 // :param profile_keys: 用户属性键值列表
 func (c *Client) ProfileUnset(distinctID string, profileKeys []string, isLoginID bool) error {
-	var profileMap map[string]interface{}
+	profileMap := make(map[string]interface{}, len(profileKeys))
 	for _, v := range profileKeys {
 		profileMap[v] = true
 	}
@@ -271,7 +281,7 @@ func (c *Client) ProfileUnset(distinctID string, profileKeys []string, isLoginID
 // ProfileDelete 删除整个用户的信息。
 // :param distinct_id: 用户的唯一标识
 func (c *Client) ProfileDelete(distinctID string, isLoginID bool) error {
-	return c.trackEvent("profile_delete", "", distinctID, "", nil, isLoginID)
+	return c.trackEvent("profile_delete", "", distinctID, "", map[string]interface{}{}, isLoginID)
 }
 
 func (c *Client) trackEvent(eventType string, eventName string, distinctID string, originalID string, properties map[string]interface{}, isLoginID bool) error {
