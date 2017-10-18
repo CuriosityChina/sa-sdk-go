@@ -4,7 +4,7 @@ SensorsAnalytics golang library
 
 ## Install
 ``` bash
-go get -u http://gopkg.in/CuriosityChina/sa-sdk-go.v1
+go get -u gopkg.in/CuriosityChina/sa-sdk-go.v1
 ```
 
 ## Usage
