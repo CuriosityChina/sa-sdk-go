@@ -3,11 +3,15 @@ package sensorsanalytics
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
+	"strings"
+	"sync"
+	"time"
 )
 
 // Consumer sensors analytics consumer data
@@ -50,7 +54,7 @@ func (c *DefaultConsumer) Send(msg map[string]interface{}) error {
 		return fmt.Errorf("%s: %s", ErrNetworkException, err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != 200 && resp.StatusCode != 201 {
+	if resp.StatusCode != 200 {
 		return fmt.Errorf("%s: %s", ErrNetworkException, fmt.Sprintf("Error response status code [code=%d]", resp.StatusCode))
 	}
 	return nil
@@ -75,35 +79,39 @@ func (c *DefaultConsumer) encodeMsg(msg map[string]interface{}) (string, string,
 	return data, string(s), nil
 }
 
+func (c *DefaultConsumer) encodeMsgList(msgList []string) (string, string) {
+	s := fmt.Sprintf("[%s]", strings.Join(msgList, ","))
+	return base64.StdEncoding.EncodeToString([]byte(s)), s
+}
+
 // BatchConsumer  批量发送数据的 Consumer，当且仅当数据达到 buffer_size 参数指定的量时，才将数据进行发送。
 type BatchConsumer struct {
 	DefaultConsumer
-	bufferSize int
-	buffer     []string
+	maxBatchSize int
+	batchBuffer  []string
 }
 
 // NewBatchConsumer 创建新的 batch consumer
-func NewBatchConsumer(serverURL string, bufferSize int) *BatchConsumer {
+func NewBatchConsumer(serverURL string, maxBatchSize int) *BatchConsumer {
 	var c BatchConsumer
 	c.urlPrefix = serverURL
-	if bufferSize > 0 && bufferSize <= 50 {
-		c.bufferSize = bufferSize
+	if maxBatchSize > 0 && maxBatchSize <= 50 {
+		c.maxBatchSize = maxBatchSize
 	} else {
-		c.bufferSize = 20
+		c.maxBatchSize = 50
 	}
-	buffer := make([]string, c.bufferSize)
-	c.buffer = buffer
+	c.batchBuffer = make([]string, c.maxBatchSize)
 	return &c
 }
 
 // Send 新的 msg 加入 buffer
 func (c *BatchConsumer) Send(msg map[string]interface{}) error {
-	data, _,  err := c.encodeMsg(msg)
+	data, _, err := c.encodeMsg(msg)
 	if err != nil {
 		return fmt.Errorf("%s: %s", ErrIllegalDataException, err)
 	}
-	c.buffer = append(c.buffer, data)
-	if len(c.buffer) >= c.bufferSize {
+	c.batchBuffer = append(c.batchBuffer, data)
+	if len(c.batchBuffer) >= c.maxBatchSize {
 		return c.Flush()
 	}
 	return nil
@@ -111,10 +119,11 @@ func (c *BatchConsumer) Send(msg map[string]interface{}) error {
 
 // Flush  用户可以主动调用 flush 接口，以便在需要的时候立即进行数据发送。
 func (c *BatchConsumer) Flush() error {
-	for _, v := range c.buffer {
+	if len(c.batchBuffer) > 0 {
+		dataList, _ := c.encodeMsgList(c.batchBuffer)
 		req, err := http.NewRequest("GET", c.urlPrefix, nil)
 		q := req.URL.Query()
-		q.Add("data", v)
+		q.Add("data_list", dataList)
 		req.URL.RawQuery = q.Encode()
 		if err != nil {
 			return fmt.Errorf("%s: %s", ErrNetworkException, err)
@@ -125,11 +134,11 @@ func (c *BatchConsumer) Flush() error {
 		if err != nil {
 			log.Printf("%s: %s", ErrNetworkException, err)
 		}
-		if resp.StatusCode != 200 && resp.StatusCode != 201 {
+		if resp.StatusCode != 200 {
 			log.Printf("%s: %s", ErrNetworkException, fmt.Sprintf("Error response status code [code=%d]", resp.StatusCode))
 		}
+		c.batchBuffer = make([]string, c.maxBatchSize)
 	}
-	c.buffer = make([]string, c.bufferSize)
 	return nil
 }
 
@@ -138,37 +147,183 @@ func (c *BatchConsumer) Close() error {
 	return c.Flush()
 }
 
-// type AsyncBatchConsumer struct {
-// 	DefaultConsumer
-// }
+// AsyncBatchConsumer 异步、批量发送数据的 Consumer。使用独立的线程进行数据发送，当满足以下两个条件之一时进行数据发送:
+type AsyncBatchConsumer struct {
+	DefaultConsumer
+	lock          sync.Mutex
+	wg            sync.WaitGroup
+	maxBatchSize  int
+	bufferSize    int
+	senderRunning bool
+	batchBuffer   []string
+	sendCh        chan string
+	stopCh        chan bool
+}
 
-// func (c *AsyncBatchConsumer) Send(msg map[string]interface{}) error {
-// 	return nil
-// }
+// NewAsyncBatchConsumer 创建新的 AsyncBatchConsumer
+// :param serverURL: 服务器 URL 地址
+// :param maxBatchSize 单个请求发送的最大大小
+// :param bufferSize 接收数据缓冲区大小
+func NewAsyncBatchConsumer(serverURL string, maxBatchSize int, bufferSize int) (*AsyncBatchConsumer, error) {
+	var c AsyncBatchConsumer
+	c.urlPrefix = serverURL
+	c.maxBatchSize = maxBatchSize
+	if maxBatchSize > 0 || maxBatchSize < 50 {
+		c.maxBatchSize = maxBatchSize
+	} else {
+		c.maxBatchSize = 50
+	}
+	if bufferSize > 0 || bufferSize < 1000 {
 
-// func (c *AsyncBatchConsumer) Flush() {
-// }
+	}
+	c.bufferSize = bufferSize
+	c.batchBuffer = make([]string, c.maxBatchSize)
+	c.stopCh = make(chan bool, 1)
+	err := c.Run()
+	return &c, err
+}
 
-// func (c *AsyncBatchConsumer) Sync_Flush() error {
-// 	return nil
-// }
+// Run 运行 Seeder
+func (c *AsyncBatchConsumer) Run() error {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	if c.senderRunning {
+		return errors.New("")
+	}
+	go c.runSender()
+	c.senderRunning = true
+	return nil
+}
 
-// func (c *AsyncBatchConsumer) Close() error {
-// 	return nil
-// }
+func (c *AsyncBatchConsumer) runSender() {
+	c.sendCh = make(chan string, c.bufferSize)
+	ticker := time.NewTicker(30 * time.Second)
+	c.wg.Add(1)
+	defer c.wg.Done()
+ForLoop:
+	for {
+		select {
+		case data, ok := <-c.sendCh:
+			if ok {
+				c.batchBuffer = append(c.batchBuffer, data)
+			}
+			if len(c.batchBuffer) >= c.maxBatchSize {
+				err := c.Flush()
+				if err != nil {
+					log.Printf("AsyncBatchConsumer Flush Data: %s", err)
+				}
+			}
+		case <-ticker.C:
+			err := c.Flush()
+			if err != nil {
+				log.Printf("AsyncBatchConsumer Flush Data: %s", err)
+			}
+		case <-c.stopCh:
+			close(c.sendCh)
+			for data := range c.sendCh {
+				c.batchBuffer = append(c.batchBuffer, data)
+				if len(c.batchBuffer) >= c.maxBatchSize {
+					err := c.Flush()
+					if err != nil {
+						log.Printf("AsyncBatchConsumer Flush Data: %s", err)
+					}
+				}
+			}
+			err := c.Flush()
+			if err != nil {
+				log.Printf("AsyncBatchConsumer Flush Data: %s", err)
+			}
+			if c.senderRunning {
+				c.senderRunning = false
+				break ForLoop
+			}
+		}
+	}
+}
 
-// func (c *AsyncBatchConsumer) Run() {
+// Stop  停止 Sender
+func (c *AsyncBatchConsumer) Stop() error {
+	c.stopCh <- true
+	c.wg.Wait()
+	return nil
+}
 
-// }
+// Send 发送数据
+func (c *AsyncBatchConsumer) Send(msg map[string]interface{}) error {
+	data, _, err := c.encodeMsg(msg)
+	if err != nil {
+		return fmt.Errorf("%s: %s", ErrIllegalDataException, err)
+	}
+	c.sendCh <- data
+	return nil
+}
 
+// Flush  用户可以主动调用 flush 接口，以便在需要的时候立即进行数据发送。
+func (c *AsyncBatchConsumer) Flush() error {
+	if len(c.batchBuffer) > 0 {
+		dataList, _ := c.encodeMsgList(c.batchBuffer)
+		req, err := http.NewRequest("GET", c.urlPrefix, nil)
+		q := req.URL.Query()
+		q.Add("data_list", dataList)
+		req.URL.RawQuery = q.Encode()
+		if err != nil {
+			return fmt.Errorf("%s: %s", ErrNetworkException, err)
+		}
+		req.Header.Set("Content-Type", "application/json; charset=utf-8")
+		var clt http.Client
+		resp, err := clt.Do(req)
+		if err != nil {
+			log.Printf("%s: %s", ErrNetworkException, err)
+		}
+		if resp.StatusCode != 200 {
+			log.Printf("%s: %s", ErrNetworkException, fmt.Sprintf("Error response status code [code=%d]", resp.StatusCode))
+		}
+		c.batchBuffer = make([]string, c.maxBatchSize)
+	}
+	return nil
+}
+
+// SyncFlush  执行一次同步发送。 表示在发送失败时抛出错误。
+func (c *AsyncBatchConsumer) SyncFlush() error {
+	if len(c.batchBuffer) > 0 {
+		dataList, _ := c.encodeMsgList(c.batchBuffer)
+		req, err := http.NewRequest("GET", c.urlPrefix, nil)
+		q := req.URL.Query()
+		q.Add("data_list", dataList)
+		req.URL.RawQuery = q.Encode()
+		if err != nil {
+			return fmt.Errorf("%s: %s", ErrNetworkException, err)
+		}
+		req.Header.Set("Content-Type", "application/json; charset=utf-8")
+		var clt http.Client
+		resp, err := clt.Do(req)
+		if err != nil {
+			return fmt.Errorf("%s: %s", ErrNetworkException, err)
+		}
+		if resp.StatusCode != 200 {
+			return fmt.Errorf("%s: %s", ErrNetworkException, fmt.Sprintf("Error response status code [code=%d]", resp.StatusCode))
+		}
+		c.batchBuffer = make([]string, c.maxBatchSize)
+	}
+	return nil
+}
+
+// Close close consumer
+func (c *AsyncBatchConsumer) Close() error {
+	return c.Stop()
+}
+
+// ConsoleConsumer 将数据直接输出到标准输出
 type ConsoleConsumer struct {
 }
 
+// NewConsoleConsumer 创建新的 ConsoleConsumer
 func NewConsoleConsumer() *ConsoleConsumer {
 	var c ConsoleConsumer
 	return &c
 }
 
+// Send 发送数据
 func (c *ConsoleConsumer) Send(msg map[string]interface{}) error {
 	b, err := json.MarshalIndent(msg, "", "    ")
 	if err != nil {
@@ -178,19 +333,24 @@ func (c *ConsoleConsumer) Send(msg map[string]interface{}) error {
 	return nil
 }
 
+// Flush  用户可以主动调用 flush 接口，以便在需要的时候立即进行数据发送。
 func (c *ConsoleConsumer) Flush() error {
 	return nil
 }
 
+// Close close consumer
 func (c *ConsoleConsumer) Close() error {
 	return nil
 }
 
+// DebugConsumer 调试用的 Consumer，逐条发送数据到服务器的Debug API,并且等待服务器返回的结果
+// 具体的说明在http://www.sensorsdata.cn/manual/
 type DebugConsumer struct {
 	urlPrefix      string
 	debugWriteData bool
 }
 
+// NewDebugConsumer 创建新的调试 consumer
 func NewDebugConsumer(serverURL string, writeData bool) (*DebugConsumer, error) {
 	var c DebugConsumer
 	debugURL, err := url.Parse(serverURL)
@@ -203,6 +363,7 @@ func NewDebugConsumer(serverURL string, writeData bool) (*DebugConsumer, error) 
 	return &c, err
 }
 
+// Send 发送数据
 func (c *DebugConsumer) Send(msg map[string]interface{}) error {
 	data, s, err := c.encodeMsg(msg)
 	if err != nil {
@@ -240,10 +401,12 @@ func (c *DebugConsumer) Send(msg map[string]interface{}) error {
 	return nil
 }
 
+// Flush  用户可以主动调用 flush 接口，以便在需要的时候立即进行数据发送。
 func (c *DebugConsumer) Flush() error {
 	return nil
 }
 
+// Close 在发送完成时，调用此接口以保证数据发送完成。
 func (c *DebugConsumer) Close() error {
 	return nil
 }
