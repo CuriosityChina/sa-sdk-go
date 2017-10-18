@@ -24,19 +24,25 @@ type Consumer interface {
 // DefaultConsumer 默认的 Consumer实现，逐条、同步的发送数据给接收服务器。
 type DefaultConsumer struct {
 	urlPrefix string
+	debug     bool
 }
 
 // NewDefaultConsumer 创建新的默认 Consumer
 // :param serverURL: 服务器的 URL 地址。
-func NewDefaultConsumer(serverURL string) *DefaultConsumer {
+func NewDefaultConsumer(serverURL string) (*DefaultConsumer, error) {
 	var c DefaultConsumer
 	c.urlPrefix = serverURL
-	return &c
+	return &c, nil
+}
+
+// SetDebug enable/disable consumer debug
+func (c *DefaultConsumer) SetDebug(debug bool) {
+	c.debug = debug
 }
 
 // Send 发送数据
 func (c *DefaultConsumer) Send(msg map[string]interface{}) error {
-	data, _, err := c.encodeMsg(msg)
+	data, s, err := c.encodeMsg(msg)
 	if err != nil {
 		return fmt.Errorf("%s: %s", ErrIllegalDataException, err)
 	}
@@ -54,6 +60,15 @@ func (c *DefaultConsumer) Send(msg map[string]interface{}) error {
 		return fmt.Errorf("%s: %s", ErrNetworkException, err)
 	}
 	defer resp.Body.Close()
+	if c.debug {
+		log.Printf("message: %s", string(s))
+		log.Printf("ret_code: %d", resp.StatusCode)
+		body, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			log.Printf("read response body: %s", err)
+		}
+		log.Printf("resp content: %s", string(body))
+	}
 	if resp.StatusCode != 200 {
 		return fmt.Errorf("%s: %s", ErrNetworkException, fmt.Sprintf("Error response status code [code=%d]", resp.StatusCode))
 	}
@@ -92,7 +107,7 @@ type BatchConsumer struct {
 }
 
 // NewBatchConsumer 创建新的 batch consumer
-func NewBatchConsumer(serverURL string, maxBatchSize int) *BatchConsumer {
+func NewBatchConsumer(serverURL string, maxBatchSize int) (*BatchConsumer, error) {
 	var c BatchConsumer
 	c.urlPrefix = serverURL
 	if maxBatchSize > 0 && maxBatchSize <= 50 {
@@ -100,17 +115,17 @@ func NewBatchConsumer(serverURL string, maxBatchSize int) *BatchConsumer {
 	} else {
 		c.maxBatchSize = 50
 	}
-	c.batchBuffer = make([]string, c.maxBatchSize)
-	return &c
+	c.batchBuffer = []string{}
+	return &c, nil
 }
 
 // Send 新的 msg 加入 buffer
 func (c *BatchConsumer) Send(msg map[string]interface{}) error {
-	data, _, err := c.encodeMsg(msg)
+	_, s, err := c.encodeMsg(msg)
 	if err != nil {
 		return fmt.Errorf("%s: %s", ErrIllegalDataException, err)
 	}
-	c.batchBuffer = append(c.batchBuffer, data)
+	c.batchBuffer = append(c.batchBuffer, string(s))
 	if len(c.batchBuffer) >= c.maxBatchSize {
 		return c.Flush()
 	}
@@ -120,7 +135,7 @@ func (c *BatchConsumer) Send(msg map[string]interface{}) error {
 // Flush  用户可以主动调用 flush 接口，以便在需要的时候立即进行数据发送。
 func (c *BatchConsumer) Flush() error {
 	if len(c.batchBuffer) > 0 {
-		dataList, _ := c.encodeMsgList(c.batchBuffer)
+		dataList, s := c.encodeMsgList(c.batchBuffer)
 		req, err := http.NewRequest("GET", c.urlPrefix, nil)
 		q := req.URL.Query()
 		q.Add("data_list", dataList)
@@ -132,12 +147,22 @@ func (c *BatchConsumer) Flush() error {
 		var clt http.Client
 		resp, err := clt.Do(req)
 		if err != nil {
-			log.Printf("%s: %s", ErrNetworkException, err)
+			return fmt.Errorf("%s: %s", ErrNetworkException, err)
+		}
+		defer resp.Body.Close()
+		if c.debug {
+			log.Printf("message: %s", string(s))
+			log.Printf("ret_code: %d", resp.StatusCode)
+			body, err := ioutil.ReadAll(resp.Body)
+			if err != nil {
+				log.Printf("read response body: %s", err)
+			}
+			log.Printf("resp content: %s", string(body))
 		}
 		if resp.StatusCode != 200 {
-			log.Printf("%s: %s", ErrNetworkException, fmt.Sprintf("Error response status code [code=%d]", resp.StatusCode))
+			return fmt.Errorf("%s: %s", ErrNetworkException, fmt.Sprintf("Error response status code [code=%d]", resp.StatusCode))
 		}
-		c.batchBuffer = make([]string, c.maxBatchSize)
+		c.batchBuffer = []string{}
 	}
 	return nil
 }
@@ -261,7 +286,7 @@ func (c *AsyncBatchConsumer) Send(msg map[string]interface{}) error {
 // Flush  用户可以主动调用 flush 接口，以便在需要的时候立即进行数据发送。
 func (c *AsyncBatchConsumer) Flush() error {
 	if len(c.batchBuffer) > 0 {
-		dataList, _ := c.encodeMsgList(c.batchBuffer)
+		dataList, s := c.encodeMsgList(c.batchBuffer)
 		req, err := http.NewRequest("GET", c.urlPrefix, nil)
 		q := req.URL.Query()
 		q.Add("data_list", dataList)
@@ -275,6 +300,15 @@ func (c *AsyncBatchConsumer) Flush() error {
 		if err != nil {
 			log.Printf("%s: %s", ErrNetworkException, err)
 		}
+		if c.debug {
+			log.Printf("message: %s", string(s))
+			log.Printf("ret_code: %d", resp.StatusCode)
+			body, err := ioutil.ReadAll(resp.Body)
+			if err != nil {
+				log.Printf("read response body: %s", err)
+			}
+			log.Printf("resp content: %s", string(body))
+		}
 		if resp.StatusCode != 200 {
 			log.Printf("%s: %s", ErrNetworkException, fmt.Sprintf("Error response status code [code=%d]", resp.StatusCode))
 		}
@@ -286,7 +320,7 @@ func (c *AsyncBatchConsumer) Flush() error {
 // SyncFlush  执行一次同步发送。 表示在发送失败时抛出错误。
 func (c *AsyncBatchConsumer) SyncFlush() error {
 	if len(c.batchBuffer) > 0 {
-		dataList, _ := c.encodeMsgList(c.batchBuffer)
+		dataList, s := c.encodeMsgList(c.batchBuffer)
 		req, err := http.NewRequest("GET", c.urlPrefix, nil)
 		q := req.URL.Query()
 		q.Add("data_list", dataList)
@@ -299,6 +333,15 @@ func (c *AsyncBatchConsumer) SyncFlush() error {
 		resp, err := clt.Do(req)
 		if err != nil {
 			return fmt.Errorf("%s: %s", ErrNetworkException, err)
+		}
+		if c.debug {
+			log.Printf("message: %s", string(s))
+			log.Printf("ret_code: %d", resp.StatusCode)
+			body, err := ioutil.ReadAll(resp.Body)
+			if err != nil {
+				log.Printf("read response body: %s", err)
+			}
+			log.Printf("resp content: %s", string(body))
 		}
 		if resp.StatusCode != 200 {
 			return fmt.Errorf("%s: %s", ErrNetworkException, fmt.Sprintf("Error response status code [code=%d]", resp.StatusCode))
