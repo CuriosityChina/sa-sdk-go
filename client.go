@@ -184,13 +184,13 @@ func (c *Client) normalizeData(data map[string]interface{}) (map[string]interfac
 						}
 					}
 				case bool:
-					if eventType != "profile_unset" {
-						return data, fmt.Errorf("%s: %s", ErrIllegalDataException, fmt.Sprintf("property value must be a str/int/float/list. [value=%s]", reflect.TypeOf(value)))
+					if eventType != "profile_unset" && key != "time_free" && key != "$is_login_id" {
+						return data, fmt.Errorf("%s: %s", ErrIllegalDataException, fmt.Sprintf("property value must be a str/int/float/list. [key=%s, value=%s]", key, reflect.TypeOf(value)))
 					}
 				case int, int32, int64, float32, float64, []string:
 					continue
 				default:
-					return data, fmt.Errorf("%s: %s", ErrIllegalDataException, fmt.Sprintf("property value must be a str/int/float/list. [value=%s]", reflect.TypeOf(value)))
+					return data, fmt.Errorf("%s: %s", ErrIllegalDataException, fmt.Sprintf("default: property value must be a str/int/float/list. [key=%s, value=%s]", key, reflect.TypeOf(value)))
 				}
 			}
 		} else {
