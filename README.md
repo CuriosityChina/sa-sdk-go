@@ -10,9 +10,9 @@ go get -u gopkg.in/CuriosityChina/sa-sdk-go.v1
 ## Usage
 ### DefaultConsumer
 ``` go
-	url := "http://127.0.0.1:8106/sa?project=default"
-	consumer, err := sa.NewDefaultConsumer(url)
-	if err != nil {
+    url := "http://127.0.0.1:8106/sa?project=default"
+    consumer, err := sa.NewDefaultConsumer(url)
+    if err != nil {
 		log.Fatalln(err)
 	}
     // consumer.SetDebug(true)
@@ -32,17 +32,17 @@ go get -u gopkg.in/CuriosityChina/sa-sdk-go.v1
     }
     err = clt.ProfileSet(distinctID, profile, false)
     if err != nil {
-		log.Fatalln(err)
+        log.Fatalln(err)
     }
 ```
 
 ### BatchConsumer
 ``` go
-	url := "http://127.0.0.1:8106/sa?project=default"
-	consumer, err := sa.NewBatchConsumer(url, 20)
-	if err != nil {
-		log.Fatalln(err)
-	}
+    url := "http://127.0.0.1:8106/sa?project=default"
+    consumer, err := sa.NewBatchConsumer(url, 20)
+    if err != nil {
+        log.Fatalln(err)
+    }
     // consumer.SetDebug(true)
     defer consumer.Close()
 	clt, err := sa.NewClient(consumer, "default", false)
@@ -66,11 +66,11 @@ go get -u gopkg.in/CuriosityChina/sa-sdk-go.v1
 
 ### AsyncBatchConsumer
 ``` go
-	url := "http://127.0.0.1:8106/sa?project=default"
-	consumer, err := sa.NewAsyncConsumer(url, 20, 2000)
-	if err != nil {
-		log.Fatalln(err)
-	}
+    url := "http://127.0.0.1:8106/sa?project=default"
+    consumer, err := sa.NewAsyncConsumer(url, 20, 2000)
+    if err != nil {
+        log.Fatalln(err)
+    }
     // consumer.SetDebug(true)
     defer consumer.Close()
 	clt, err := sa.NewClient(consumer, "default", false)
