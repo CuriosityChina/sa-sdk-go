@@ -202,7 +202,7 @@ func NewAsyncBatchConsumer(serverURL string, maxBatchSize int, bufferSize int) (
 
 	}
 	c.bufferSize = bufferSize
-	c.batchBuffer = make([]string, c.maxBatchSize)
+	c.batchBuffer = []string{}
 	c.stopCh = make(chan bool, 1)
 	err := c.Run()
 	return &c, err
@@ -275,11 +275,11 @@ func (c *AsyncBatchConsumer) Stop() error {
 
 // Send 发送数据
 func (c *AsyncBatchConsumer) Send(msg map[string]interface{}) error {
-	data, _, err := c.encodeMsg(msg)
+	_, s, err := c.encodeMsg(msg)
 	if err != nil {
 		return fmt.Errorf("%s: %s", ErrIllegalDataException, err)
 	}
-	c.sendCh <- data
+	c.sendCh <- string(s)
 	return nil
 }
 
@@ -312,7 +312,7 @@ func (c *AsyncBatchConsumer) Flush() error {
 		if resp.StatusCode != 200 {
 			log.Printf("%s: %s", ErrNetworkException, fmt.Sprintf("Error response status code [code=%d]", resp.StatusCode))
 		}
-		c.batchBuffer = make([]string, c.maxBatchSize)
+		c.batchBuffer = []string{}
 	}
 	return nil
 }
