@@ -28,7 +28,7 @@ func NewClient(consumer Consumer, projectName string, timeFree bool) (*Client, e
 	}
 	c.projectName = &projectName
 	c.enableTimeFree = timeFree
-	namePattern, err := regexp.Compile("^([a-zA-Z_$][a-zA-Z0-9_$]{0,99})")
+	namePattern, err := regexp.Compile("^([a-zA-Z_$][a-zA-Z0-9_$]{0,99}$)")
 	if err != nil {
 		return nil, err
 	}
