@@ -158,12 +158,6 @@ func (c *Client) normalizeData(data map[string]interface{}) (map[string]interfac
 		}
 	}
 	// 检查 properties
-	var eventType string
-	eventTypeI, ok := data["type"]
-	if ok {
-		eventType = eventTypeI.(string)
-
-	}
 	propertiesi, ok := data["properties"]
 	if ok {
 		properties, ok := propertiesi.(map[string]interface{})
