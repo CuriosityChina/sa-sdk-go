@@ -183,11 +183,7 @@ func (c *Client) normalizeData(data map[string]interface{}) (map[string]interfac
 							return data, fmt.Errorf("%s: %s", ErrIllegalDataException, fmt.Sprintf("the max length of property value is 8192. [value=%s]", value))
 						}
 					}
-				case bool:
-					if eventType != "profile_unset" && key != "time_free" && key != "$is_login_id" {
-						return data, fmt.Errorf("%s: %s", ErrIllegalDataException, fmt.Sprintf("property value must be a str/int/float/list. [key=%s, value=%s]", key, reflect.TypeOf(value)))
-					}
-				case int, int32, int64, float32, float64, []string:
+				case int, int32, int64, float32, float64, []string, bool:
 					continue
 				default:
 					return data, fmt.Errorf("%s: %s", ErrIllegalDataException, fmt.Sprintf("default: property value must be a str/int/float/list. [key=%s, value=%s]", key, reflect.TypeOf(value)))
