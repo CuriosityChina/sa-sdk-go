@@ -136,10 +136,9 @@ func (c *BatchConsumer) Send(msg map[string]interface{}) error {
 func (c *BatchConsumer) Flush() error {
 	if len(c.batchBuffer) > 0 {
 		dataList, s := c.encodeMsgList(c.batchBuffer)
-		req, err := http.NewRequest("GET", c.urlPrefix, nil)
-		q := req.URL.Query()
+		q := url.Values{}
 		q.Add("data_list", dataList)
-		req.URL.RawQuery = q.Encode()
+		req, err := http.NewRequest("POST", c.urlPrefix, strings.NewReader(q.Encode()))
 		if err != nil {
 			return fmt.Errorf("%s: %s", ErrNetworkException, err)
 		}
